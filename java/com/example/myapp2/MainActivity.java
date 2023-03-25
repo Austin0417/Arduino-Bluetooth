@@ -13,6 +13,14 @@ import android.Manifest;
 import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.bluetooth.BluetoothGatt;
+import android.bluetooth.BluetoothGattCallback;
+import android.bluetooth.BluetoothGattCharacteristic;
+import android.bluetooth.BluetoothGattService;
+import android.bluetooth.BluetoothProfile;
+import android.bluetooth.le.BluetoothLeScanner;
+import android.bluetooth.le.ScanCallback;
+import android.bluetooth.le.ScanResult;
 import android.content.BroadcastReceiver;
 import android.content.DialogInterface;
 import android.content.pm.PackageManager;
@@ -38,6 +46,7 @@ import android.widget.Toast;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -56,9 +65,12 @@ public class MainActivity extends AppCompatActivity {
     public static final int REQUEST_BLUETOOTH_SCAN = 3;
     private static final int REQUEST_ENABLE_BT = 1;
     private static final int REQUEST_ENABLE_BLUETOOTH_ADMIN = 2;
+    private static final String CHARACTERISTIC_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a8";
+    private static final String SERVICE_UUID = "4fafc201-1fb5-459e-8fcc-c5c9c331914b";
+
     Context context;
     BluetoothManager manager;
-    BluetoothAdapter adapter;
+    BluetoothAdapter adapter = BluetoothAdapter.getDefaultAdapter();
     BluetoothServerSocket server;
     BluetoothSocket socket;
     Button initializeBluetooth;
@@ -69,22 +81,67 @@ public class MainActivity extends AppCompatActivity {
     byte[] inputBuffer;
     ArrayList<BluetoothDevice> devices = new ArrayList<BluetoothDevice>();
     Map<String, Parcelable[]> uuidMapping = new HashMap<String, Parcelable[]>();
-
-    BroadcastReceiver bluetoothReceiver = new BroadcastReceiver() {
-        @SuppressLint("MissingPermission")
+    BluetoothLeScanner bluetoothScanner = adapter.getBluetoothLeScanner();
+    @SuppressLint("MissingPermission")
+    BluetoothGattCallback gattCallback = new BluetoothGattCallback() {
         @Override
-        public void onReceive(Context context, Intent intent) {
-            String action = intent.getAction();
-            if (BluetoothDevice.ACTION_FOUND.equals(action)) {
-                BluetoothDevice device = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE);
-                Parcelable[] uuids = intent.getParcelableArrayExtra(BluetoothDevice.EXTRA_UUID);
-                devices.add(device);
-                if (device != null && device.getName() != null) {
-                    uuidMapping.put(device.getName(), uuids);
+        public void onConnectionStateChange(BluetoothGatt gatt, int status, int newState) {
+            super.onConnectionStateChange(gatt, status, newState);
+            if (newState == BluetoothProfile.STATE_CONNECTED) {
+                Log.i("Device info", "Discovering bluetooth services of target device...");
+                gatt.discoverServices();
+            } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
+                Log.i("Device info", "Disconnecting bluetooth device...");
+                gatt.disconnect();
+                gatt.close();
+            }
+        }
+        @Override
+        public void onCharacteristicChanged(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, byte[] value) {
+            // Read the updated characteristic value
+            byte[] message = characteristic.getValue();
+            String messageString = new String(message, StandardCharsets.UTF_8);
+            Log.i("Read Data:", "Received data: " + messageString);
+            // Do something with the updated characteristic value
+        };
+        @Override
+        public void onServicesDiscovered(BluetoothGatt gatt, int status) {
+            if (status == BluetoothGatt.GATT_SUCCESS) {
+                BluetoothGattService service = gatt.getService(UUID.fromString(SERVICE_UUID));
+                Log.i("Device info", "Successfully discovered services of target device");
+                if (service != null) {
+                    Log.i("Service status", "Service is not null.");
+                    BluetoothGattCharacteristic characteristic = service.getCharacteristic(UUID.fromString(CHARACTERISTIC_UUID));
+                    if (characteristic != null) {
+                            gatt.readCharacteristic(characteristic);
+                    } else {
+                        Log.i("Characteristic info", "Characteristic not found!");
+                    }
+                } else {
+                    Log.i("Service info", "Service not found!");
                 }
+            } else {
+                Log.i("Service Discovery", "Service discovery failed");
+            }
+        }
+        @Override
+        public void onCharacteristicRead(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, int status) {
+            if (status == BluetoothGatt.GATT_SUCCESS) {
+                    byte data[] = characteristic.getValue();
+                    String value = new String(data, StandardCharsets.UTF_8);
+                    Log.i("Read data", "Received data: " + value);
+
+
+            }
+        }
+        @Override
+        public void onCharacteristicWrite(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, int status) {
+            if (status == BluetoothGatt.GATT_SUCCESS) {
+
             }
         }
     };
+
 
     private void showExplanation(String title, String message, String permission, int permissionRequestCode) {
         AlertDialog.Builder builder = new AlertDialog.Builder(this);
@@ -136,7 +193,6 @@ public class MainActivity extends AppCompatActivity {
     );
     private void initializeAdapters() {
         //manager = (BluetoothManager) context.getSystemService(Context.BLUETOOTH_SERVICE);
-        adapter = BluetoothAdapter.getDefaultAdapter();
         if (adapter == null) {
             Toast.makeText(this, "Device does not support Bluetooth", Toast.LENGTH_LONG).show();
             return;
@@ -158,76 +214,47 @@ public class MainActivity extends AppCompatActivity {
                 requestPermissions(new String[]{Manifest.permission.ACCESS_FINE_LOCATION}, REQUEST_BLUETOOTH_SCAN);
             }
         } else {
-            adapter.startDiscovery();
+            bluetoothScanner.startScan(new ScanCallback() {
+                @Override
+                public void onScanResult(int callbackType, ScanResult result) {
+                    super.onScanResult(callbackType, result);
+                    devices.add(result.getDevice());
+                }
+                @Override
+                public void onScanFailed(int errorCode) {
+                    Log.i("Scan failed", "Could not complete scan for nearby BLE devices");
+                    return;
+                }
+            });
         }
+
         String targetDeviceAddress = "";
         if (!devices.isEmpty()) {
             Log.i ("Number of found devices", "# of devices: " + devices.size());
             Log.i("Found Devices", "Devices: ");
             for (int i = 0; i < devices.size(); i++) {
+                //bluetoothScanner.stopScan(scanCallback);
                 if (devices.get(i) != null && devices.get(i).getName() != null) {
                     Log.i("Devices", "Device #" + String.valueOf(i) + " name: " + devices.get(i).getName());
-                    if (devices.get(i).getName().equals("Core300s")) {
+                    if (devices.get(i).getName().equals("ESP32")) {
                         targetDeviceAddress = devices.get(i).getAddress();
                         device = devices.get(i);
                         Log.i("Device Found", "Found target device: " + device.getName());
                         Log.i("Device Address", "Device address is: " + targetDeviceAddress);
-                        adapter.cancelDiscovery();
                         break;
                     }
                 }
             }
-            Log.i("Devices", "Target device was not found");
             if (device == null) {
+                Log.i("Devices", "Target device was not found");
                 return;
             }
         } else {
             Log.i("Devices", "No devices were found");
             return;
         }
-        //BluetoothServerSocket tmp = null;
-
-        try {
-            //socket = device.createRfcommSocketToServiceRecord(UUID.fromString(device.getUuids().toString()));
-            socket = device.createRfcommSocketToServiceRecord(UUID.fromString("00001101-0000-1000-8000-00805F9B34FB"));
-            Log.i("Success", "Established socket successfully");
-        } catch (IOException e) {
-            Log.e("IO Exception", "Socket accept failed", e);
-            return;
-        }
-        //server = tmp;
-        try {
-              socket.connect();
-//            socket = server.accept();
-//            server.close();
-            Log.i("Success", "Server socket accept successful");
-        } catch (IOException e) {
-            Log.e("Accept", "1st attempt failed" + e.getMessage());
-            e.printStackTrace();
-            try {
-                Log.d("Accept", "2nd attempt: trying fallback...");
-                socket = (BluetoothSocket) device.getClass().getMethod("createRfcommSocket", new Class[] {int.class}).invoke(device, 1);
-                socket.connect();
-                Log.i("Success", "Server socket accept successful");
-            } catch (Exception exception) {
-                Log.d("Failed", "2nd attempt failed. Exiting...");
-                return;
-            }
-        }
-        try {
-            input = socket.getInputStream();
-            Log.i("Success", "Successfully established input stream");
-        } catch (IOException e) {
-            Log.e("Input stream", "Error while establishing input stream", e);
-            return;
-        }
-        try {
-            output = socket.getOutputStream();
-            Log.i("Success", "Successfully established output stream");
-        } catch (IOException e) {
-            Log.e("Output stream", "Error while establishing output stream", e);
-            return;
-        }
+        BluetoothGatt gatt = device.connectGatt(this, false, gattCallback);
+        gatt.discoverServices();
     }
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -237,7 +264,7 @@ public class MainActivity extends AppCompatActivity {
         scanForBluetooth = findViewById(R.id.scanBluetooth);
         scanForBluetooth.setVisibility(View.INVISIBLE);
         IntentFilter intentFilter = new IntentFilter(BluetoothDevice.ACTION_FOUND);
-        registerReceiver(bluetoothReceiver, intentFilter);
+//        registerReceiver(bluetoothReceiver, intentFilter);
         initializeBluetooth.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
