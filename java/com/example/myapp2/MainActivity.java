@@ -16,6 +16,7 @@ import android.app.AlertDialog;
 import android.bluetooth.BluetoothGatt;
 import android.bluetooth.BluetoothGattCallback;
 import android.bluetooth.BluetoothGattCharacteristic;
+import android.bluetooth.BluetoothGattDescriptor;
 import android.bluetooth.BluetoothGattService;
 import android.bluetooth.BluetoothProfile;
 import android.bluetooth.le.BluetoothLeScanner;
@@ -67,26 +68,34 @@ public class MainActivity extends AppCompatActivity {
     private static final int REQUEST_ENABLE_BLUETOOTH_ADMIN = 2;
     private static final String CHARACTERISTIC_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a8";
     private static final String SERVICE_UUID = "4fafc201-1fb5-459e-8fcc-c5c9c331914b";
-
-    Context context;
-    BluetoothManager manager;
+    private static final String DESCRIPTOR_UUID = "00002902-0000-1000-8000-00805f9b34fb";
     BluetoothAdapter adapter = BluetoothAdapter.getDefaultAdapter();
-    BluetoothServerSocket server;
-    BluetoothSocket socket;
+
     Button initializeBluetooth;
     Button scanForBluetooth;
-    InputStream input;
-    OutputStream output;
-    Handler handler;
-    byte[] inputBuffer;
+    Button startBtn;
+    Button stopBtn;
+
     ArrayList<BluetoothDevice> devices = new ArrayList<BluetoothDevice>();
     Map<String, Parcelable[]> uuidMapping = new HashMap<String, Parcelable[]>();
     BluetoothLeScanner bluetoothScanner = adapter.getBluetoothLeScanner();
+    private ScanCallback scanCallback = new ScanCallback() {
+        @Override
+        public void onScanResult(int callbackType, ScanResult result) {
+//            super.onScanResult(callbackType, result);
+            devices.add(result.getDevice());
+        }
+
+        @Override
+        public void onScanFailed(int errorCode) {
+            Log.i("Scan failed", "Could not complete scan for nearby BLE devices");
+            return;
+        }
+    };
     @SuppressLint("MissingPermission")
     BluetoothGattCallback gattCallback = new BluetoothGattCallback() {
         @Override
         public void onConnectionStateChange(BluetoothGatt gatt, int status, int newState) {
-            super.onConnectionStateChange(gatt, status, newState);
             if (newState == BluetoothProfile.STATE_CONNECTED) {
                 Log.i("Device info", "Discovering bluetooth services of target device...");
                 gatt.discoverServices();
@@ -96,14 +105,18 @@ public class MainActivity extends AppCompatActivity {
                 gatt.close();
             }
         }
+
         @Override
-        public void onCharacteristicChanged(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, byte[] value) {
+        public void onCharacteristicChanged(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic) {
             // Read the updated characteristic value
             byte[] message = characteristic.getValue();
             String messageString = new String(message, StandardCharsets.UTF_8);
-            Log.i("Read Data:", "Received data: " + messageString);
+            Log.i("Notification", "Updated status: " + messageString);
             // Do something with the updated characteristic value
-        };
+        }
+
+        ;
+
         @Override
         public void onServicesDiscovered(BluetoothGatt gatt, int status) {
             if (status == BluetoothGatt.GATT_SUCCESS) {
@@ -111,9 +124,19 @@ public class MainActivity extends AppCompatActivity {
                 Log.i("Device info", "Successfully discovered services of target device");
                 if (service != null) {
                     Log.i("Service status", "Service is not null.");
-                    BluetoothGattCharacteristic characteristic = service.getCharacteristic(UUID.fromString(CHARACTERISTIC_UUID));
-                    if (characteristic != null) {
-                            gatt.readCharacteristic(characteristic);
+                    BluetoothGattCharacteristic discoveredCharacteristic = service.getCharacteristic(UUID.fromString(CHARACTERISTIC_UUID));
+                    if (discoveredCharacteristic != null) {
+                            gatt.readCharacteristic(discoveredCharacteristic);
+                            if (gatt.setCharacteristicNotification(discoveredCharacteristic, true)) {
+                                Log.i("Set characteristic notification", "Success!");
+                                Log.i("Characteristic property flags" , String.valueOf(discoveredCharacteristic.getProperties()));
+                                BluetoothGattDescriptor desc = discoveredCharacteristic.getDescriptor(UUID.fromString(DESCRIPTOR_UUID));
+                                desc.setValue(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE);
+                                desc.setValue(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE);
+                                gatt.writeDescriptor(desc);
+                            } else {
+                                Log.i("Set characteristic notification", "Failure!");
+                            }
                     } else {
                         Log.i("Characteristic info", "Characteristic not found!");
                     }
@@ -124,16 +147,17 @@ public class MainActivity extends AppCompatActivity {
                 Log.i("Service Discovery", "Service discovery failed");
             }
         }
+
+
         @Override
-        public void onCharacteristicRead(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, int status) {
+        public void onCharacteristicRead(BluetoothGatt gatt, BluetoothGattCharacteristic discoveredCharacteristic, int status) {
             if (status == BluetoothGatt.GATT_SUCCESS) {
-                    byte data[] = characteristic.getValue();
-                    String value = new String(data, StandardCharsets.UTF_8);
-                    Log.i("Read data", "Received data: " + value);
-
-
+                byte data[] = discoveredCharacteristic.getValue();
+                String value = new String(data, StandardCharsets.UTF_8);
+                Log.i("Read data", "Received data: " + value);
             }
         }
+
         @Override
         public void onCharacteristicWrite(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, int status) {
             if (status == BluetoothGatt.GATT_SUCCESS) {
@@ -153,6 +177,7 @@ public class MainActivity extends AppCompatActivity {
         });
         builder.create().show();
     }
+
     @SuppressLint("MissingPermission")
     @Override
     public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
@@ -165,12 +190,12 @@ public class MainActivity extends AppCompatActivity {
                 Log.i("Permission", "Bluetooth permission denied");
             }
         } else if (requestCode == REQUEST_BLUETOOTH_SCAN) {
-                if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                    Log.i("Permission", "Bluetooth scan permission granted");
-                    //adapter.startDiscovery();
-                } else {
-                    Log.i("Permission", "Bluetooth scan permission denied");
-                }
+            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                Log.i("Permission", "Bluetooth scan permission granted");
+                //adapter.startDiscovery();
+            } else {
+                Log.i("Permission", "Bluetooth scan permission denied");
+            }
         }
     }
 
@@ -191,6 +216,7 @@ public class MainActivity extends AppCompatActivity {
                 }
             }
     );
+
     private void initializeAdapters() {
         //manager = (BluetoothManager) context.getSystemService(Context.BLUETOOTH_SERVICE);
         if (adapter == null) {
@@ -205,8 +231,8 @@ public class MainActivity extends AppCompatActivity {
         }
         scanForBluetooth.setVisibility(View.VISIBLE);
     }
+
     private void scanForBluetooth() {
-        BluetoothDevice device = null;
         if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
             if (ActivityCompat.shouldShowRequestPermissionRationale(this, Manifest.permission.ACCESS_FINE_LOCATION)) {
                 showExplanation("Permission Needed", "Rationale", Manifest.permission.BLUETOOTH_SCAN, REQUEST_BLUETOOTH_SCAN);
@@ -214,23 +240,17 @@ public class MainActivity extends AppCompatActivity {
                 requestPermissions(new String[]{Manifest.permission.ACCESS_FINE_LOCATION}, REQUEST_BLUETOOTH_SCAN);
             }
         } else {
-            bluetoothScanner.startScan(new ScanCallback() {
-                @Override
-                public void onScanResult(int callbackType, ScanResult result) {
-                    super.onScanResult(callbackType, result);
-                    devices.add(result.getDevice());
-                }
-                @Override
-                public void onScanFailed(int errorCode) {
-                    Log.i("Scan failed", "Could not complete scan for nearby BLE devices");
-                    return;
-                }
-            });
+            bluetoothScanner.startScan(scanCallback);
+            startBtn.setVisibility(View.VISIBLE);
         }
+    }
 
+    @SuppressLint("MissingPermission")
+    private void startProcess() {
+        BluetoothDevice device = null;
         String targetDeviceAddress = "";
         if (!devices.isEmpty()) {
-            Log.i ("Number of found devices", "# of devices: " + devices.size());
+            Log.i("Number of found devices", "# of devices: " + devices.size());
             Log.i("Found Devices", "Devices: ");
             for (int i = 0; i < devices.size(); i++) {
                 //bluetoothScanner.stopScan(scanCallback);
@@ -241,30 +261,37 @@ public class MainActivity extends AppCompatActivity {
                         device = devices.get(i);
                         Log.i("Device Found", "Found target device: " + device.getName());
                         Log.i("Device Address", "Device address is: " + targetDeviceAddress);
+                        bluetoothScanner.stopScan(scanCallback);
                         break;
                     }
                 }
             }
             if (device == null) {
                 Log.i("Devices", "Target device was not found");
+//                bluetoothScanner.stopScan(scanCallback);
                 return;
             }
         } else {
             Log.i("Devices", "No devices were found");
+//            bluetoothScanner.stopScan(scanCallback);
             return;
         }
         BluetoothGatt gatt = device.connectGatt(this, false, gattCallback);
-        gatt.discoverServices();
+        //gatt.discoverServices();
+
     }
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
         initializeBluetooth = findViewById(R.id.initializeBluetooth);
         scanForBluetooth = findViewById(R.id.scanBluetooth);
+        startBtn = findViewById(R.id.startBtn);
+
         scanForBluetooth.setVisibility(View.INVISIBLE);
-        IntentFilter intentFilter = new IntentFilter(BluetoothDevice.ACTION_FOUND);
-//        registerReceiver(bluetoothReceiver, intentFilter);
+        startBtn.setVisibility(View.INVISIBLE);
+
         initializeBluetooth.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -276,26 +303,14 @@ public class MainActivity extends AppCompatActivity {
             public void onClick(View view) {
                 scanForBluetooth();
             }
+
         });
-//        initializeAdapters();
-//        scanForBluetooth();
-        //run();
-    }
-
-    private void run(String deviceAddress) {
-        BluetoothDevice device = adapter.getRemoteDevice(deviceAddress);
-        inputBuffer = new byte[1024];
-        int numBytes;
-
-        while (true) {
-            try {
-                numBytes = input.read(inputBuffer);
-                Message data = handler.obtainMessage(MessageConstants.MESSAGE_READ, numBytes, -1, inputBuffer);
-                data.sendToTarget();
-            } catch(IOException e) {
-                Log.e("Read input stream", "Input stream was disconnected", e);
-                break;
+        startBtn.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                startProcess();
             }
-        }
+        });
+
     }
 }
