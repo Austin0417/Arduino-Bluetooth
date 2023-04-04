@@ -35,6 +35,7 @@ import android.bluetooth.BluetoothSocket;
 import android.content.Intent;
 import android.content.IntentFilter;
 
+import android.os.Looper;
 import android.os.Message;
 
 import android.os.Handler;
@@ -42,6 +43,7 @@ import android.os.Parcelable;
 import android.util.Log;
 import android.view.View;
 import android.widget.Button;
+import android.widget.TextView;
 import android.widget.Toast;
 
 import java.io.IOException;
@@ -75,6 +77,9 @@ public class MainActivity extends AppCompatActivity {
     Button scanForBluetooth;
     Button startBtn;
     Button stopBtn;
+    TextView textView;
+    TextView lastDetection;
+    Context context;
 
     ArrayList<BluetoothDevice> devices = new ArrayList<BluetoothDevice>();
     Map<String, Parcelable[]> uuidMapping = new HashMap<String, Parcelable[]>();
@@ -98,6 +103,12 @@ public class MainActivity extends AppCompatActivity {
         public void onConnectionStateChange(BluetoothGatt gatt, int status, int newState) {
             if (newState == BluetoothProfile.STATE_CONNECTED) {
                 Log.i("Device info", "Discovering bluetooth services of target device...");
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        Toast.makeText(context, "Connected to ESP32 successfully", Toast.LENGTH_SHORT).show();
+                    }
+                });
                 gatt.discoverServices();
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                 Log.i("Device info", "Disconnecting bluetooth device...");
@@ -112,6 +123,12 @@ public class MainActivity extends AppCompatActivity {
             byte[] message = characteristic.getValue();
             String messageString = new String(message, StandardCharsets.UTF_8);
             Log.i("Notification", "Updated status: " + messageString);
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    textView.setText("Status: " + messageString);
+                }
+            });
             // Do something with the updated characteristic value
         }
 
@@ -131,7 +148,6 @@ public class MainActivity extends AppCompatActivity {
                                 Log.i("Set characteristic notification", "Success!");
                                 Log.i("Characteristic property flags" , String.valueOf(discoveredCharacteristic.getProperties()));
                                 BluetoothGattDescriptor desc = discoveredCharacteristic.getDescriptor(UUID.fromString(DESCRIPTOR_UUID));
-                                desc.setValue(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE);
                                 desc.setValue(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE);
                                 gatt.writeDescriptor(desc);
                             } else {
@@ -192,7 +208,6 @@ public class MainActivity extends AppCompatActivity {
         } else if (requestCode == REQUEST_BLUETOOTH_SCAN) {
             if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
                 Log.i("Permission", "Bluetooth scan permission granted");
-                //adapter.startDiscovery();
             } else {
                 Log.i("Permission", "Bluetooth scan permission denied");
             }
@@ -277,6 +292,8 @@ public class MainActivity extends AppCompatActivity {
             return;
         }
         BluetoothGatt gatt = device.connectGatt(this, false, gattCallback);
+//        BluetoothManager manager = (BluetoothManager) getSystemService(Context.BLUETOOTH_SERVICE);
+//        manager.getConnectedDevices(BluetoothProfile.GATT);
         //gatt.discoverServices();
 
     }
@@ -287,10 +304,13 @@ public class MainActivity extends AppCompatActivity {
         setContentView(R.layout.activity_main);
         initializeBluetooth = findViewById(R.id.initializeBluetooth);
         scanForBluetooth = findViewById(R.id.scanBluetooth);
+        textView = findViewById(R.id.statusText);
+        lastDetection = findViewById(R.id.lastDetection);
         startBtn = findViewById(R.id.startBtn);
 
         scanForBluetooth.setVisibility(View.INVISIBLE);
         startBtn.setVisibility(View.INVISIBLE);
+        context = this;
 
         initializeBluetooth.setOnClickListener(new View.OnClickListener() {
             @Override
