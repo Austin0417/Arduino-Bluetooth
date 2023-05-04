@@ -35,6 +35,7 @@ import android.bluetooth.BluetoothSocket;
 import android.content.Intent;
 import android.content.IntentFilter;
 
+import android.os.Looper;
 import android.os.Message;
 
 import android.os.Handler;
@@ -42,7 +43,11 @@ import android.os.Parcelable;
 import android.util.Log;
 import android.view.View;
 import android.widget.Button;
+import android.widget.TextView;
 import android.widget.Toast;
+
+import org.json.JSONException;
+import org.json.JSONObject;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -55,6 +60,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
 
 public class MainActivity extends AppCompatActivity {
     private interface MessageConstants {
@@ -69,12 +76,16 @@ public class MainActivity extends AppCompatActivity {
     private static final String CHARACTERISTIC_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a8";
     private static final String SERVICE_UUID = "4fafc201-1fb5-459e-8fcc-c5c9c331914b";
     private static final String DESCRIPTOR_UUID = "00002902-0000-1000-8000-00805f9b34fb";
+    private final Semaphore connectionSemaphore = new Semaphore(1);
     BluetoothAdapter adapter = BluetoothAdapter.getDefaultAdapter();
 
     Button initializeBluetooth;
     Button scanForBluetooth;
     Button startBtn;
     Button stopBtn;
+    TextView textView;
+    TextView lastDetection;
+    Context context;
 
     ArrayList<BluetoothDevice> devices = new ArrayList<BluetoothDevice>();
     Map<String, Parcelable[]> uuidMapping = new HashMap<String, Parcelable[]>();
@@ -98,7 +109,14 @@ public class MainActivity extends AppCompatActivity {
         public void onConnectionStateChange(BluetoothGatt gatt, int status, int newState) {
             if (newState == BluetoothProfile.STATE_CONNECTED) {
                 Log.i("Device info", "Discovering bluetooth services of target device...");
-                gatt.discoverServices();
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        Toast.makeText(context, "Connected to ESP32 successfully", Toast.LENGTH_SHORT).show();
+                    }
+                });
+                  gatt.requestMtu(512);
+//                gatt.discoverServices();
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                 Log.i("Device info", "Disconnecting bluetooth device...");
                 gatt.disconnect();
@@ -107,11 +125,40 @@ public class MainActivity extends AppCompatActivity {
         }
 
         @Override
+        public void onMtuChanged(BluetoothGatt gatt, int mtu, int status) {
+            if (status == BluetoothGatt.GATT_SUCCESS) {
+                Log.i("MTU Request", "MTU request success");
+                gatt.discoverServices();
+            } else {
+                Log.i("MTU Request", "MTU request failed");
+            }
+        }
+        @Override
         public void onCharacteristicChanged(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic) {
             // Read the updated characteristic value
             byte[] message = characteristic.getValue();
             String messageString = new String(message, StandardCharsets.UTF_8);
-            Log.i("Notification", "Updated status: " + messageString);
+            Log.i("Unparsed JSON string: ", messageString);
+            String status = "";
+            int lastDetected = 0;
+            try {
+                JSONObject jsonObject = new JSONObject(messageString);
+                status = jsonObject.getString("status");
+                lastDetected = jsonObject.getInt("lastDetected");
+                String finalStatus = status;
+                int finalLastDetected = lastDetected;
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        textView.setText("Status: " + finalStatus);
+                        lastDetection.setText("Last detected: " + finalLastDetected + "m ago");
+                    }
+                });
+            } catch (JSONException e) {
+                Log.i("Error", "Could not parse JSON string");
+            }
+            Log.i("Notification", "Updated status: " + status);
+            Log.i("Notification", "Last detected: " + lastDetected);
             // Do something with the updated characteristic value
         }
 
@@ -132,8 +179,8 @@ public class MainActivity extends AppCompatActivity {
                                 Log.i("Characteristic property flags" , String.valueOf(discoveredCharacteristic.getProperties()));
                                 BluetoothGattDescriptor desc = discoveredCharacteristic.getDescriptor(UUID.fromString(DESCRIPTOR_UUID));
                                 desc.setValue(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE);
-                                desc.setValue(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE);
                                 gatt.writeDescriptor(desc);
+                                //gatt.requestMtu(512);
                             } else {
                                 Log.i("Set characteristic notification", "Failure!");
                             }
@@ -192,7 +239,6 @@ public class MainActivity extends AppCompatActivity {
         } else if (requestCode == REQUEST_BLUETOOTH_SCAN) {
             if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
                 Log.i("Permission", "Bluetooth scan permission granted");
-                //adapter.startDiscovery();
             } else {
                 Log.i("Permission", "Bluetooth scan permission denied");
             }
@@ -249,36 +295,60 @@ public class MainActivity extends AppCompatActivity {
     private void startProcess() {
         BluetoothDevice device = null;
         String targetDeviceAddress = "";
-        if (!devices.isEmpty()) {
-            Log.i("Number of found devices", "# of devices: " + devices.size());
-            Log.i("Found Devices", "Devices: ");
-            for (int i = 0; i < devices.size(); i++) {
-                //bluetoothScanner.stopScan(scanCallback);
-                if (devices.get(i) != null && devices.get(i).getName() != null) {
-                    Log.i("Devices", "Device #" + String.valueOf(i) + " name: " + devices.get(i).getName());
-                    if (devices.get(i).getName().equals("ESP32")) {
-                        targetDeviceAddress = devices.get(i).getAddress();
-                        device = devices.get(i);
-                        Log.i("Device Found", "Found target device: " + device.getName());
-                        Log.i("Device Address", "Device address is: " + targetDeviceAddress);
-                        bluetoothScanner.stopScan(scanCallback);
-                        break;
+//        if (!devices.isEmpty()) {
+//            Log.i("Number of found devices", "# of devices: " + devices.size());
+//            Log.i("Found Devices", "Devices: ");
+//            for (int i = 0; i < devices.size(); i++) {
+//                if (devices.get(i) != null && devices.get(i).getName() != null) {
+//                    Log.i("Devices", "Device #" + String.valueOf(i) + " name: " + devices.get(i).getName());
+//                    if (devices.get(i).getName().equals("ESP32")) {
+//                        targetDeviceAddress = devices.get(i).getAddress();
+//                        device = devices.get(i);
+//                        Log.i("Device Found", "Found target device: " + device.getName());
+//                        Log.i("Device Address", "Device address is: " + targetDeviceAddress);
+//                        bluetoothScanner.stopScan(scanCallback);
+//                        break;
+//                    }
+//                }
+//            }
+//            if (device == null) {
+//                Log.i("Devices", "Target device was not found");
+//                return;
+//            }
+//        } else {
+//            Log.i("Devices", "No devices were found");
+//            return;
+//        }
+        BluetoothManager manager = (BluetoothManager) getSystemService(Context.BLUETOOTH_SERVICE);
+        List<BluetoothDevice> connectedDevices = manager.getConnectedDevices(BluetoothProfile.GATT);
+        while (connectedDevices.isEmpty()) {
+            if (!devices.isEmpty()) {
+                Log.i("Number of found devices", "# of devices: " + devices.size());
+                Log.i("Found Devices", "Devices: ");
+                for (int i = 0; i < devices.size(); i++) {
+                    if (devices.get(i) != null && devices.get(i).getName() != null) {
+                        Log.i("Devices", "Device #" + String.valueOf(i) + " name: " + devices.get(i).getName());
+                        if (devices.get(i).getName().equals("ESP32")) {
+                            targetDeviceAddress = devices.get(i).getAddress();
+                            device = devices.get(i);
+                            Log.i("Device Found", "Found target device: " + device.getName());
+                            Log.i("Device Address", "Device address is: " + targetDeviceAddress);
+                            bluetoothScanner.stopScan(scanCallback);
+                            break;
+                        }
                     }
                 }
-            }
-            if (device == null) {
-                Log.i("Devices", "Target device was not found");
-//                bluetoothScanner.stopScan(scanCallback);
+                if (device == null) {
+                    Log.i("Devices", "Target device was not found");
+                    return;
+                }
+            } else {
+                Log.i("Devices", "No devices were found");
                 return;
             }
-        } else {
-            Log.i("Devices", "No devices were found");
-//            bluetoothScanner.stopScan(scanCallback);
-            return;
+                BluetoothGatt gatt = device.connectGatt(this, false, gattCallback);
+                connectedDevices = manager.getConnectedDevices(BluetoothProfile.GATT);
         }
-        BluetoothGatt gatt = device.connectGatt(this, false, gattCallback);
-        //gatt.discoverServices();
-
     }
 
     @Override
@@ -287,10 +357,13 @@ public class MainActivity extends AppCompatActivity {
         setContentView(R.layout.activity_main);
         initializeBluetooth = findViewById(R.id.initializeBluetooth);
         scanForBluetooth = findViewById(R.id.scanBluetooth);
+        textView = findViewById(R.id.statusText);
+        lastDetection = findViewById(R.id.lastDetection);
         startBtn = findViewById(R.id.startBtn);
 
         scanForBluetooth.setVisibility(View.INVISIBLE);
         startBtn.setVisibility(View.INVISIBLE);
+        context = this;
 
         initializeBluetooth.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -311,6 +384,5 @@ public class MainActivity extends AppCompatActivity {
                 startProcess();
             }
         });
-
     }
 }
