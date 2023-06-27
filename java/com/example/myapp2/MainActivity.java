@@ -141,16 +141,23 @@ public class MainActivity extends AppCompatActivity {
             Log.i("Unparsed JSON string: ", messageString);
             String status = "";
             int lastDetected = 0;
+            boolean motionDetected, proximityDetected, lightDetected, vibrationDetected;
             try {
                 JSONObject jsonObject = new JSONObject(messageString);
                 status = jsonObject.getString("status");
                 lastDetected = jsonObject.getInt("lastDetected");
+                motionDetected = jsonObject.getBoolean("motion");
+                proximityDetected = jsonObject.getBoolean("proximity");
+                lightDetected = jsonObject.getBoolean("light");
+                vibrationDetected = jsonObject.getBoolean("vibration");
+                //float lightIntensity = (float) jsonObject.getDouble("lightIntensity");
+
                 String finalStatus = status;
                 int finalLastDetected = lastDetected;
                 runOnUiThread(new Runnable() {
                     @Override
                     public void run() {
-                        textView.setText("Status: " + finalStatus);
+                        textView.setText("Status: " + finalStatus + "\nMotion: " + motionDetected + "\nProximity: " + proximityDetected + "\nLight: " + lightDetected + "\nVibration: " + vibrationDetected);
                         lastDetection.setText("Last detected: " + finalLastDetected + "m ago");
                     }
                 });
@@ -295,30 +302,7 @@ public class MainActivity extends AppCompatActivity {
     private void startProcess() {
         BluetoothDevice device = null;
         String targetDeviceAddress = "";
-//        if (!devices.isEmpty()) {
-//            Log.i("Number of found devices", "# of devices: " + devices.size());
-//            Log.i("Found Devices", "Devices: ");
-//            for (int i = 0; i < devices.size(); i++) {
-//                if (devices.get(i) != null && devices.get(i).getName() != null) {
-//                    Log.i("Devices", "Device #" + String.valueOf(i) + " name: " + devices.get(i).getName());
-//                    if (devices.get(i).getName().equals("ESP32")) {
-//                        targetDeviceAddress = devices.get(i).getAddress();
-//                        device = devices.get(i);
-//                        Log.i("Device Found", "Found target device: " + device.getName());
-//                        Log.i("Device Address", "Device address is: " + targetDeviceAddress);
-//                        bluetoothScanner.stopScan(scanCallback);
-//                        break;
-//                    }
-//                }
-//            }
-//            if (device == null) {
-//                Log.i("Devices", "Target device was not found");
-//                return;
-//            }
-//        } else {
-//            Log.i("Devices", "No devices were found");
-//            return;
-//        }
+
         BluetoothManager manager = (BluetoothManager) getSystemService(Context.BLUETOOTH_SERVICE);
         List<BluetoothDevice> connectedDevices = manager.getConnectedDevices(BluetoothProfile.GATT);
         while (connectedDevices.isEmpty()) {
@@ -348,7 +332,11 @@ public class MainActivity extends AppCompatActivity {
             }
                 BluetoothGatt gatt = device.connectGatt(this, false, gattCallback);
                 connectedDevices = manager.getConnectedDevices(BluetoothProfile.GATT);
+
         }
+        initializeBluetooth.setVisibility(View.INVISIBLE);
+        scanForBluetooth.setVisibility(View.INVISIBLE);
+        startBtn.setVisibility(View.INVISIBLE);
     }
 
     @Override
