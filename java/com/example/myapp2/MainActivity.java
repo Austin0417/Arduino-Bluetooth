@@ -52,6 +52,7 @@ import org.json.JSONObject;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -78,11 +79,10 @@ public class MainActivity extends AppCompatActivity {
     private static final String DESCRIPTOR_UUID = "00002902-0000-1000-8000-00805f9b34fb";
     private final Semaphore connectionSemaphore = new Semaphore(1);
     BluetoothAdapter adapter = BluetoothAdapter.getDefaultAdapter();
-
+    BluetoothGatt mGatt;
     Button initializeBluetooth;
     Button scanForBluetooth;
     Button startBtn;
-    Button stopBtn;
     TextView textView;
     TextView lastDetection;
     Context context;
@@ -109,6 +109,7 @@ public class MainActivity extends AppCompatActivity {
         public void onConnectionStateChange(BluetoothGatt gatt, int status, int newState) {
             if (newState == BluetoothProfile.STATE_CONNECTED) {
                 Log.i("Device info", "Discovering bluetooth services of target device...");
+                mGatt = gatt;
                 runOnUiThread(new Runnable() {
                     @Override
                     public void run() {
@@ -141,35 +142,77 @@ public class MainActivity extends AppCompatActivity {
             Log.i("Unparsed JSON string: ", messageString);
             String status = "";
             int lastDetected = 0;
-            boolean motionDetected, proximityDetected, lightDetected, vibrationDetected;
+            boolean motionDetected, proximityDetected, lightDetected, vibrationDetected, soundDetected;
             try {
                 JSONObject jsonObject = new JSONObject(messageString);
                 status = jsonObject.getString("status");
                 lastDetected = jsonObject.getInt("lastDetected");
+
                 motionDetected = jsonObject.getBoolean("motion");
                 proximityDetected = jsonObject.getBoolean("proximity");
                 lightDetected = jsonObject.getBoolean("light");
                 vibrationDetected = jsonObject.getBoolean("vibration");
-                //float lightIntensity = (float) jsonObject.getDouble("lightIntensity");
+                soundDetected = jsonObject.getBoolean("sound");
+                int totalActiveSensors = 0;
+                if (motionDetected) {
+                    totalActiveSensors++;
+                }
+                if (proximityDetected) {
+                    totalActiveSensors++;
+                }
+                if (lightDetected) {
+                    totalActiveSensors++;
+                }
+                if (vibrationDetected) {
+                    totalActiveSensors++;
+                }
+                if (soundDetected) {
+                    totalActiveSensors++;
+                }
+
+                float lightIntensity = BigDecimal.valueOf(Math.round(jsonObject.getDouble("lightIntensity") * 100.0) / 100.0).floatValue();
+                int distance = jsonObject.getInt("distance");
+                float vibrationIntensity = BigDecimal.valueOf(Math.round(jsonObject.getDouble("vibrationIntensity") * 100.0) / 100.0).floatValue();
+                float soundIntensity = BigDecimal.valueOf(Math.round(jsonObject.getDouble("soundIntensity") * 100.0) / 100.0).floatValue();
+                float vibrationBaseline = BigDecimal.valueOf(Math.round(jsonObject.getDouble("vibrationBaseline") * 100.0) / 100.0).floatValue();
+                float lightBaseline = BigDecimal.valueOf(Math.round(jsonObject.getDouble("lightBaseline") * 100.0) / 100.0).floatValue();
+                int proximityBaseline = jsonObject.getInt("proximityBaseline");
+                float lightBaselineOff = BigDecimal.valueOf(Math.round(jsonObject.getDouble("lightOffBaseline") * 100.0) / 100.0).floatValue();
+                String lightingStatus = jsonObject.getString("lightingStatus");
 
                 String finalStatus = status;
                 int finalLastDetected = lastDetected;
+                int finalTotalActiveSensors = totalActiveSensors;
                 runOnUiThread(new Runnable() {
                     @Override
                     public void run() {
-                        textView.setText("Status: " + finalStatus + "\nMotion: " + motionDetected + "\nProximity: " + proximityDetected + "\nLight: " + lightDetected + "\nVibration: " + vibrationDetected);
+                        textView.setText("Status: " + finalStatus
+                                + "\nMotion: " + motionDetected
+                                + "\nProximity: " + proximityDetected
+                                + "\nLight: " + lightDetected
+                                + "\nVibration: " + vibrationDetected
+                                + "\nSound: " + soundDetected
+                                + "\nUltrasonic Baseline: " + proximityBaseline + " cm"
+                                + "\nUltrasonic Distance " + distance + " cm"
+                                + "\nLights On Baseline: " + lightBaseline + " lux"
+                                + "\nLights Off Baseline: " + lightBaselineOff + " lux"
+                                + "\nRoom Lighting Status: " + lightingStatus
+                                + "\nLight Intensity: " + lightIntensity + " lux"
+                                + "\nVibration baseline: " + vibrationBaseline + " m/s^2"
+                                + "\nVibration Intensity: " + vibrationIntensity + " m/s^2"
+                                + "\nSound Intensity: " + soundIntensity
+                                + "\nTotal Active Sensors: " + finalTotalActiveSensors);
                         lastDetection.setText("Last detected: " + finalLastDetected + "m ago");
                     }
                 });
             } catch (JSONException e) {
                 Log.i("Error", "Could not parse JSON string");
+                e.printStackTrace();
             }
             Log.i("Notification", "Updated status: " + status);
             Log.i("Notification", "Last detected: " + lastDetected);
             // Do something with the updated characteristic value
-        }
-
-        ;
+        };
 
         @Override
         public void onServicesDiscovered(BluetoothGatt gatt, int status) {
